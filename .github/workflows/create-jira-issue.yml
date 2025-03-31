@@ -1,0 +1,85 @@
+name: Create Jira Story from GitHub Issue
+
+on:
+  issues:
+    types: [opened]
+
+jobs:
+  create-jira-issue:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: main 브랜치 체크아웃
+        uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Jira 로그인
+        uses: atlassian/gajira-login@v3
+        env:
+          JIRA_BASE_URL: ${{ secrets.JIRA_BASE_URL }}
+          JIRA_USER_EMAIL: ${{ secrets.JIRA_USER_EMAIL }}
+          JIRA_API_TOKEN: ${{ secrets.JIRA_API_TOKEN }}
+
+      - name: 이슈 템플릿 파싱
+        uses: stefanbuck/github-issue-parser@v3
+        id: issue-parser
+        with:
+          template-path: .github/ISSUE_TEMPLATE/issue-form.yml
+
+      - name: 마크다운 → Jira 문법 변환
+        uses: peter-evans/jira2md@v1
+        id: md2jira
+        with:
+          input-text: |
+            ### GitHub Issue
+            - ${{ github.event.issue.html_url }}
+
+            ${{ github.event.issue.body }}
+          mode: md2jira
+
+      - name: Jira 이슈 생성
+        id: create
+        uses: atlassian/gajira-create@v3
+        with:
+          project: GUC
+          issuetype: Story
+          summary: '${{ github.event.issue.title }}'
+          description: '${{ steps.md2jira.outputs.output-text }}'
+          fields: |
+            {
+              "parent": {
+                "key": "${{ steps.issue-parser.outputs.issueparser_parentKey }}"
+              }
+            }
+
+      - name: 브랜치 생성 및 푸시
+        env:
+          GH_PAT: ${{ secrets.GH_PAT }}
+        run: |
+          ISSUE_NUMBER="${{ steps.create.outputs.issue }}"
+          BRANCH_TYPE="${{ steps.issue-parser.outputs.issueparser_branchType }}"
+          BRANCH_NAME_INPUT="${{ steps.issue-parser.outputs.issueparser_branch }}"
+          SANITIZED_INPUT=$(echo "${BRANCH_NAME_INPUT}" | tr '[:upper:]' '[:lower:]' | sed 's/ /-/g' | sed 's/[^a-z0-9\\-]//g')
+          BRANCH_NAME="${BRANCH_TYPE}/${ISSUE_NUMBER}-${SANITIZED_INPUT}"
+          
+          git config user.name "github-actions"
+          git config user.email "actions@github.com"
+          
+          git checkout -b "${BRANCH_NAME}"
+          git push "https://x-access-token:${GH_PAT}@github.com/${{ github.repository }}.git" "${BRANCH_NAME}"
+
+      - name: GitHub 이슈 제목 업데이트
+        uses: actions-cool/issues-helper@v3
+        with:
+          actions: 'update-issue'
+          token: ${{ secrets.GITHUB_TOKEN }}
+          title: '[${{ steps.create.outputs.issue }}] ${{ github.event.issue.title }}'
+
+      - name: Jira 링크 코멘트 남기기
+        uses: actions-cool/issues-helper@v3
+        with:
+          actions: 'create-comment'
+          token: ${{ secrets.GITHUB_TOKEN }}
+          issue-number: ${{ github.event.issue.number }}
+          body: '📌 Jira Ticket: [${{ steps.create.outputs.issue }}](${{ secrets.JIRA_BASE_URL }}/browse/${{ steps.create.outputs.issue }})'
