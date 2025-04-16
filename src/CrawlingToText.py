@@ -13,15 +13,15 @@ driver = webdriver.Chrome(options=options)
 driver.get("https://roadmap.sh/")
 time.sleep(3)
 
-roadmap_data = []
+roadmapData = []
 
 # 각 색션 찾기
 sections = driver.find_elements(By.XPATH,"//h2")
 
 for section in sections:
-    roadmap_type = section.text.strip()
+    roadmapType = section.text.strip()
     #'Questions'까지만 수집
-    if roadmap_type == 'Questions':
+    if roadmapType == 'Questions':
         break
 
     #색션 다음 요소에서 항목 추출
@@ -29,23 +29,23 @@ for section in sections:
 
     links = nextDiv.find_elements(By.TAG_NAME,"a")
     for link in links:
-        roadmap_name = link.text.strip()
+        roadmapName = link.text.strip()
 
         #'New'가 포함되어 있다면 괄호로 감싸기
-        if roadmap_name.endswith("New"):
-            roadmap_name = roadmap_name.replace("New", "").strip()
+        if roadmapName.endswith("New"):
+            roadmapName = roadmapName.replace("New", "").strip()
 
-        if roadmap_name:
-            roadmap_data.append({
-                'roadmapType': roadmap_type,
-                'roadmapName': roadmap_name,
+        if roadmapName:
+            roadmapData.append({
+                'roadmapType': roadmapType,
+                'roadmapName': roadmapName,
             })
 
 #종료
 driver.quit()
 
 # 데이터프레임 변환 및 저장
-df = pd.DataFrame(roadmap_data)
+df = pd.DataFrame(roadmapData)
 
 # roadmapName을 URL에 사용할 수 있도록 변환
 df['urlName'] = df['roadmapName'].str.lower().str.replace(' ', '-').str.replace(r'[^\w\-]', '', regex=True)
@@ -65,5 +65,5 @@ exception_mapping = {
 # 매핑 적용
 df['urlName'] = df['urlName'].apply(lambda x: exception_mapping.get(x, x))
 
-def get_roadmap_df():
+def GetRoadmapDf():
     return df
