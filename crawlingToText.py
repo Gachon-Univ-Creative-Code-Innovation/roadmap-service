@@ -13,7 +13,7 @@ driver = webdriver.Chrome(options=options)
 driver.get("https://roadmap.sh/")
 time.sleep(3)
 
-roadmap_data = []
+roadmapData = []
 
 # 각 색션 찾기
 sections = driver.find_elements(By.XPATH,"//h2")
