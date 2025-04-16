@@ -25,9 +25,9 @@ for section in sections:
         break
 
     #색션 다음 요소에서 항목 추출
-    next_div = section.find_element(By.XPATH,"following-sibling::*[1]")
+    nextDiv = section.find_element(By.XPATH,"following-sibling::*[1]")
 
-    links = next_div.find_elements(By.TAG_NAME,"a")
+    links = nextDiv.find_elements(By.TAG_NAME,"a")
     for link in links:
         roadmap_name = link.text.strip()
 
