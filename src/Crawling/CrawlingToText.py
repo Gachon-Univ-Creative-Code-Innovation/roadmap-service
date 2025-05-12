@@ -1,14 +1,19 @@
 import pandas as pd
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.common.by import By
 import time
 
 # 크롬 드라이버 설정
 options = Options()
-options.add_argument('--headless')
-options.add_argument("--window-size=1920x1080")
-driver = webdriver.Chrome(options=options)
+options.binary_location = "/usr/bin/chromium"  # 크롬 바이너리 경로 명시
+options.add_argument('--headless=new')         # headless 모드는 new 방식 권장
+options.add_argument('--no-sandbox')
+options.add_argument('--disable-dev-shm-usage')
+
+service = Service("/usr/bin/chromedriver")  # chromedriver 설치 경로 명시
+driver = webdriver.Chrome(service=service, options=options)
 
 driver.get("https://roadmap.sh/")
 time.sleep(3)
