@@ -1,12 +1,7 @@
-from src.Utils.DBClient import DBClientCall, BucketCall
+from DBClient import DBClientCall, BucketCall
 
-
-def UploadSvgToStorage(filename: str, localPath: str):
+def UploadSvgToStorage(filename: str, local_path: str):
     supabase = DBClientCall()
     bucket = BucketCall()
-
-    _ = supabase.storage.from_(bucket).upload(
-        filename, localPath, {"content-type": "text/markdown", "x-upsert": "true"}
-    )
-
+    bucket.upload(local_path, path=filename)
     return True
