@@ -25,11 +25,12 @@ ENV CHROMEDRIVER_BIN=/usr/lib/chromium/chromedriver
 # 작업 디렉터리 설정
 WORKDIR /app
 
+# 필요 파일 복사
+COPY . .
+
 # 위치 지정
 ENV PYTHONPATH=/app
 
-# 필요 파일 복사
-COPY . .
 
 # 의존성 설치
 RUN pip install --upgrade pip
