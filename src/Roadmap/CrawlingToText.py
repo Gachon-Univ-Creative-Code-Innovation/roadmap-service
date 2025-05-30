@@ -25,8 +25,8 @@ sections = driver.find_elements(By.XPATH,"//h2")
 
 for section in sections:
     roadmapType = section.text.strip()
-    #'Questions'까지만 수집
-    if roadmapType == 'Questions':
+    #'Skill-based Roadmaps'까지만 수집
+    if roadmapType == 'Project Ideas':
         break
 
     #색션 다음 요소에서 항목 추출
