@@ -28,6 +28,11 @@ RUN apt-get update && apt-get install -y \
     wget \
     unzip \
     curl \
+    build-essential \
+    gcc \
+    g++ \
+    python3-dev \
+    libpq-dev \
     --no-install-recommends && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 
@@ -53,4 +58,4 @@ RUN pip install --upgrade pip
 RUN pip install --no-cache-dir -r requirements.txt
 
 # FastAPI 실행
-CMD ["uvicorn", "Main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["uvicorn", "Main:app", "--host", "0.0.0.0", "--port", "8080"]
