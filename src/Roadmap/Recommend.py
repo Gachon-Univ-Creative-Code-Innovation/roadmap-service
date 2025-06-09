@@ -23,45 +23,22 @@ class RecommendRequest(BaseModel):
 # 요청 모델
 async def aiRecommendRoadmapFromToken(req: Request):
     try:
-        print("[1] 요청 수신")
         # JWT 토큰에서 userId 추출
         token = GetTokenFromHeader(req)
-        print("[2] 토큰 추출:", token)
         userId = GetDataFromToken(token,"user_id")
-        print("[3] userId 추출:", userId)
-        # 테스트 용으로 userId를 하드코딩
-        # userId = 253
         if not userId:
             raise HTTPException(status_code=401, detail="유효하지 않은 토큰입니다.")
 
-        # 1. 로드맵 후보 불러오기
         roadmapOptions = getRoadmapOptions()
-        print("[4] 로드맵 옵션 수:", len(roadmapOptions))
+        tags = await getUserTags(userId)
+        selectedNum = askAiForRoadmaps(tags, roadmapOptions)
 
-        # 2. 유저 태그 가져오기 (token도 함께 전달)
-        tags = await getUserTags(token,userId)
-        print("[5] 유저 태그:", tags)
-
-        # 3. AI에게 추천 번호 요청
-        selectedNames = askAiForRoadmaps(tags, roadmapOptions)
-        print("[6] AI 추천 로드맵 이름:", selectedNames)
-
-        # 첫 번째 추천 이름 사용
-        selectedName = selectedNames[0]
-
-        # 4. 추천 이름으로 해당 로드맵 찾기
-        matched = [(k, v) for k, v in roadmapOptions.items() if v["roadmapName"] == selectedName]
-        if not matched:
-            print("[오류] 추천 결과가 유효하지 않음:", selectedName)
+        if not selectedNum or selectedNum not in roadmapOptions:
             raise HTTPException(status_code=404, detail="AI가 유효한 로드맵을 추천하지 못했습니다.")
 
-        # 5. 최종 로드맵 정보 추출
-        selectedNum, roadmapInfo = matched[0]
+        roadmapInfo = roadmapOptions[selectedNum]
         roadmapName = roadmapInfo["roadmapName"]
-        print("[7] 추천된 로드맵 이름:", roadmapName)
-
         svgUrl = getSvgUrlByName(roadmapName)
-        print("[8] SVG URL:", svgUrl)
 
         return {
             "userId": userId,
@@ -72,7 +49,6 @@ async def aiRecommendRoadmapFromToken(req: Request):
         }
 
     except Exception as e:
-        print("[예외 발생]", str(e))
         raise HTTPException(status_code=500, detail=f"추천 실패: {str(e)}")
 
 
@@ -87,6 +63,7 @@ def getRoadmapOptions():
     return numbered
 
 # 2. 매칭 API에서 유저 태그 받아오기 (현재 더미 태그로 대체)
+
 async def getUserTags(token: str, userId: int, topK: int = 5):
     headers = {
         "Authorization": f"Bearer {token}",
@@ -105,6 +82,7 @@ async def getUserTagsTest(userId: int, topK: int = 5):
     # 실험용 더미 데이터
     return ["react", "typescript", "html"]
 
+
 # 3. AI에게 로드맵 추천 요청
 def askAiForRoadmaps(tags: list[str], roadmapOptions: dict, topN: int = 1) -> list[str]:
     optionsText = "\n".join([f"-{info['roadmapName']}" for info in roadmapOptions.values()])
@@ -122,13 +100,17 @@ def askAiForRoadmaps(tags: list[str], roadmapOptions: dict, topN: int = 1) -> li
                 {"role": "system", "content": systemMsg},
                 {"role": "user", "content": userMsg}
             ],
+
             "max_tokens": 20
+
         }
     )
 
     content = response.json()["choices"][0]["message"]["content"]
     print("AI 응답:", content)
+
     return [name.strip() for name in content.split(",") if name.strip()]
+
 
 # 4. 로드맵 이름으로 svgUrl 조회
 def getSvgUrlByName(roadmapName: str):
@@ -137,17 +119,4 @@ def getSvgUrlByName(roadmapName: str):
     if data and data[0].get("svgUrl"):
         return data[0]["svgUrl"]
     return None
-
-# 실행 방법 (CMD)
-# uvicorn test5:app --reload
-
-# 테스트 예시 (CMD)
-# curl -X POST http://localhost:8000/api/roadmap/ai-recommend ^
-#  -H "Content-Type: application/json" ^
-#  -d "{\"userId\": 5}"
-
-#수정할 내용, JWT 토큰에서 userID 가져오게 코드 수정하면 아래 코드 수정하면 됨.
-# 요청 모델
-#class RecommendRequest(BaseModel):
-#    userId: int
 
