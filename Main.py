@@ -4,12 +4,12 @@ from fastapi.responses import JSONResponse, Response
 from fastapi.middleware.cors import CORSMiddleware
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
+from starlette import status
+
 from src.Roadmap.CrawlingToText import GetRoadmapDf
 from src.Utils.RepoToDB import UploadRoadmap,ReadRoadmapList,UpdateRoadmap,ClearRoadmap,ReadRoadmapAllList
 from src.Utils.RepoToStorage import UploadStorage,ClearStorage
-from src.Utils.GetGWT import GetDataFromToken,GetTokenFromHeader
-from pydantic import BaseModel
-from src.Roadmap.Recommend import aiRecommendRoadmapFromToken, getRoadmapOptions, getSvgUrlByName, askAiForRoadmaps,getUserTagsTest
+from src.Roadmap.Recommend import aiRecommendRoadmaps
 from pyppeteer import launch
 import traceback
 import datetime
@@ -350,6 +350,68 @@ async def GetRoadmapSvg(roadmapName: str):
                 content={
                     "status": "500",
                     "message": f"로드맵 SVG URL 조회 실패: {e}",
+                    "data": None
+                }
+            )
+
+# supabase에 저장되어 있는 로드맵 svg파일을 보여줌
+@app.get("/api/roadmap/recommended-roadmap")
+async def GetRecommendedRoadmap(req: Request):
+        """
+        유저의 추천 로드맵 SVG 파일을 반환
+        """
+        try:
+            body = await req.json()
+            userId = body.get("userId")
+            if not userId:
+                return JSONResponse(
+                    status_code=400,
+                    content={
+                        "status": "400",
+                        "message": "userId가 필요합니다.",
+                        "data": None
+                    }
+                )
+
+            # 추천 API 호출
+            async with httpx.AsyncClient() as client:
+                recommendRes = await client.post(
+                    f"https://alice-cloud.com/api/roadmap/ai-recommend",
+                    json={"userId": userId}
+                )
+
+            if recommendRes.status_code != 200:
+                return JSONResponse(
+                    status_code=recommendRes.status_code,
+                    content={
+                        "status": str(recommendRes.status_code),
+                        "message": "추천 API 호출 실패",
+                        "data": None
+                    }
+                )
+            recommendedRoadmaps = recommendRes.json().get("recommendedRoadmaps", [])
+
+            svgResults = []
+            records = ReadRoadmapList()
+            for recommendedRoadmap in recommendedRoadmaps:
+                roadmapName = recommendedRoadmap.get("roadmapName")
+                matched = next((r for r in records if r["roadmapName"] == roadmapName), None)
+                if matched and matched.get("svgUrl"):
+                    svgResults.append({
+                        "roadmapName": roadmapName,
+                        "svgUrl": matched["svgUrl"]
+                    })
+            return {
+                "status": "200",
+                "message": "추천 로드맵 SVG 파일을 {len(svgResults)}개 불러왔습니다.",
+                "data" : svgResults
+            }
+        except Exception as e:
+            return JSONResponse(
+                status_code=500,
+                content={
+                    "status": "500",
+                    "message": f"추천 로드맵 SVG 파일 불러오기 실패: {str(e)}",
                     "data": None
                 }
             )
