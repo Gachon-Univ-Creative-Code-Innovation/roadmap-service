@@ -38,9 +38,15 @@ def ClearRoadmap():
         print(f"[RPC 요청 실패] {e}")
         raise
 
-def ReadRoadmapList():
+def ReadRoadmapAllList():
     result = supabase.table("Roadmap_DB").select("*").execute()
     return result.data
+
+
+def ReadRoadmapList():
+    result = supabase.table("Roadmap_DB").select("*").execute()
+    filtered = [r for r in result.data if r.get("svgUrl")]
+    return filtered
 
 def UpdateRoadmap(roadmapName: str, svgUrl: str):
     result = supabase.table("Roadmap_DB") \

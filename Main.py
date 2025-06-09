@@ -1,16 +1,15 @@
-from contextlib import asynccontextmanager
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi import Request
 from fastapi.responses import JSONResponse, Response
 from fastapi.middleware.cors import CORSMiddleware
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
-from starlette import status
-
 from src.Roadmap.CrawlingToText import GetRoadmapDf
-from src.Utils.RepoToDB import UploadRoadmap,ReadRoadmapList,UpdateRoadmap,ClearRoadmap
+from src.Utils.RepoToDB import UploadRoadmap,ReadRoadmapList,UpdateRoadmap,ClearRoadmap,ReadRoadmapAllList
 from src.Utils.RepoToStorage import UploadStorage,ClearStorage
-from src.Roadmap.Recommend import aiRecommendRoadmaps
+from src.Utils.GetGWT import GetDataFromToken,GetTokenFromHeader
+from pydantic import BaseModel
+from src.Roadmap.Recommend import aiRecommendRoadmapFromToken, getRoadmapOptions, getSvgUrlByName, askAiForRoadmaps,getUserTagsTest
 from pyppeteer import launch
 import traceback
 import datetime
@@ -22,6 +21,57 @@ df = GetRoadmapDf()
 scheduler = BackgroundScheduler()
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_BUCKET = os.getenv("SUPABASE_BUCKET")
+app = FastAPI(title="Roadmap Service API")
+
+class RecommendRequest(BaseModel):
+    userId: int
+
+
+def ClearAndSaveData():
+    try:
+        # 1. 초기화
+        print(f"[{datetime.datetime.now()}] 데이터 초기화 작업 시작")
+        ClearRoadmap()  # DB 초기화
+        ClearStorage()  # 스토리지 초기화
+
+        # 2. 데이터 재등록
+        df = GetRoadmapDf()  # 로드맵 데이터 가져오기
+        for _, row in df.iterrows():
+            data = {
+                "roadmapType": row['roadmapType'],
+                "roadmapName": row['roadmapName'],
+                "roadmapUrl": row['urlName'],
+                "svgUrl": None,
+            }
+            UploadRoadmap(data)  # DB에 데이터 저장
+        print(f"[{datetime.datetime.now()}] 데이터 초기화 및 저장 완료")
+    except Exception as e:
+        print(f"[{datetime.datetime.now()}] 데이터 초기화 작업 실패: {e}")
+        traceback.print_exc()
+        raise Exception(f"초기화 작업 실패: {e}")
+
+@app.post("/api/scheduler/initialize")
+def initialize_data():
+    """
+    API를 통해 데이터 초기화 및 저장 작업을 수동으로 실행.
+    """
+    try:
+        ClearAndSaveData()
+        return {
+            "status": "200",
+            "message": "데이터 초기화 및 저장 작업이 완료되었습니다.",
+            "data": None
+        }
+    except Exception as e:
+        return JSONResponse(
+            status_code=500,
+            content={
+                "status": "500",
+                "message": f"초기화 작업 실패: {str(e)}"
+            }
+        )
+
+
 
 # 로드맵 재로드를 하는 스케줄러 실행
 def scheduled_job():
@@ -31,38 +81,44 @@ def scheduled_job():
     try:
         SaveRoadmaps()
         loop = asyncio.get_event_loop()
-        loop.create_task(SaveRoadmapSvg())
+        loop.create_task(SaveRoadmapImage())
         print("[스케줄러] DB 및 SVG 저장 완료")
     except Exception as e:
         print(f"[스케줄러 오류] {e}")
 
 
 # 스케줄러 시작 함수
-def start_scheduler():
+def start_scheduler(cron_time: str):
     """매일 새벽 3시 정각에 작업 실행 (서버 시간 기준)"""
     if scheduler.running:
         print("[스케줄러] 이미 실행 중입니다.")
         return
 
-    trigger = CronTrigger(hour=3, minute=0)
-    scheduler.add_job(scheduled_job, trigger)
+    hour, minute = map(int, cron_time.split(" "))
+    trigger = CronTrigger(hour=hour, minute=minute)
+    scheduler.add_job(ClearAndSaveData, trigger)
     scheduler.start()
-    print("[스케줄러] 시작 완료")
+    print(f"[스케줄러] 매일 {hour:02d}:{minute:02d}에 데이터 초기화 작업이 실행됩니다.")
 
-# 스케줄러 시작
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    print("[앱 시작] 초기 로드맵 재로드 및 스케줄러 실행")
-    scheduled_job()
-    start_scheduler()
-    yield
+# 스케줄러 시작 (서버 시작 시)
+@app.on_event("startup")
+async def app_startup():
+    print("[시작] 스케줄러 시작")
+    cron_time = os.getenv("CRON_TIME", "3 0")  # 기본값: 매일 오전 3시
+    start_scheduler(cron_time)
 
-app = FastAPI(title="Roadmap Service API", lifespan=lifespan)
+# 스케줄러 종료 (서버 종료 시)
+@app.on_event("shutdown")
+async def app_shutdown():
+    print("[종료] 스케줄러 종료")
+    scheduler.shutdown()
+
+
 
 # CORS 설정 (필요시)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["http://localhost:5173"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -97,7 +153,6 @@ def SaveRoadmaps():
                 "roadmapName": row['roadmapName'],
                 "roadmapUrl": row['urlName'],
                 "svgUrl": None,
-                "userId": 1,  # 기본값 1로 설정
             }
 
             UploadRoadmap(data)
@@ -128,7 +183,7 @@ def ReadAllRoadmaps():
 
         return {
                 "status": "200",
-                "message": "전체 로드맵 리스트를 성공적으로 불러왔습니다.",
+                "message": "로드맵 리스트를 성공적으로 불러왔습니다.",
                 "data": records
             }
 
@@ -142,11 +197,11 @@ def ReadAllRoadmaps():
             }
         )
 
-# 로드맵 SVG 파일을 Supabase에 저장
-@app.post("/api/roadmap/saveSvg")
-async def SaveRoadmapSvg():
-    """SVG파일을 roadmap.sh에서 크롤링하고 Supabase에 저장"""
-    records = ReadRoadmapList()
+# 로드맵을 크롤링해서 svg 형태로 Supabase에 저장
+@app.post("/api/roadmap/saveImage")
+async def SaveRoadmapImage():
+    """SVG 파일을 roadmap.sh에서 크롤링하고 Supabase에 저장"""
+    records = ReadRoadmapAllList()
     results = []
 
     try:
@@ -161,20 +216,19 @@ async def SaveRoadmapSvg():
             }
         )
 
-    try:
-        # pyppeteer로 웹 페이지 접근 및 SVG 추출
-        browser = await launch(
-            headless=True,
-            executablePath='/usr/bin/chromium',
-            args=[
-                "--no-sandbox",
-                "--disable-setuid-sandbox",
-                "--disable-dev-shm-usage",
-                "--disable-gpu",
-                "--no-zygote"
-            ]
-        )
 
+    browser = await launch(
+        headless=True,
+        executablePath='/usr/bin/chromium',
+        args=[
+            "--no-sandbox",
+            "--disable-setuid-sandbox",
+            "--disable-dev-shm-usage",
+            "--disable-gpu",
+            "--no-zygote"
+        ]
+    )
+    try:
         for record in records:
             urlName = record['roadmapUrl']
             roadmapName = record['roadmapName']
@@ -186,6 +240,7 @@ async def SaveRoadmapSvg():
                     "status": "로드맵 URL 없음",
                     "svgUrl": None
                 })
+                await browser.close()
                 continue
 
             try:
@@ -193,8 +248,9 @@ async def SaveRoadmapSvg():
                 await page.setViewport({'width': 1980, 'height': 1080})
                 await page.goto(url, {'waitUntil': 'load', 'timeout': 180000})
 
+                # SVG 요소 검색
                 svgElement = None
-                for _ in range(60):
+                for _ in range(30):
                     svgElement = await page.querySelector('#resource-svg-wrap svg')
                     if svgElement:
                         break
@@ -206,8 +262,10 @@ async def SaveRoadmapSvg():
                         "status": "SVG 요소 없음",
                         "svgUrl": None
                     })
+                    await browser.close()
                     continue
 
+                # SVG 추출 및 저장
                 svgHtml = await page.evaluate('(element) => element.outerHTML', svgElement)
                 # SVG 파일 로컬 저장
                 fileName = f"{roadmapName}Roadmap.svg"
@@ -215,9 +273,8 @@ async def SaveRoadmapSvg():
                 with open(localPath, 'w', encoding='utf-8') as f:
                     f.write(svgHtml)
 
-                # Supabase 스토리지에 SVG 업로드
+                # Supabase 스토리지에 png 업로드
                 UploadStorage(filename=fileName, local_path=localPath)
-
                 # Supabase DB에 메타데이터 저장
                 svgUrl = f"{SUPABASE_URL}/storage/v1/object/public/{SUPABASE_BUCKET}/{fileName}"
                 UpdateRoadmap(roadmapName=roadmapName, svgUrl=svgUrl)
@@ -227,19 +284,16 @@ async def SaveRoadmapSvg():
                     "status": "업로드 완료",
                     "svgUrl": svgUrl
                 })
-
                 await asyncio.sleep(1)
                 await page.close()
 
             except Exception as e:
                 traceback.print_exc()
-                return JSONResponse(
-                    status_code=500,
-                    content={
-                        "status": "500",
-                        "message": f"로드맵 SVG 저장 실패: {e}",
-                        "svgUrl": None
-                    })
+                results.append({
+                    "roadmapName": roadmapName,
+                    "status": f"에러 발생: {e}",
+                    "svgUrl": None
+                })
                 continue
 
     except Exception as e:
@@ -300,67 +354,37 @@ async def GetRoadmapSvg(roadmapName: str):
                 }
             )
 
-# supabase에 저장되어 있는 로드맵 svg파일을 보여줌
-@app.get("/api/roadmap/recommended-roadmap")
-async def GetRecommendedRoadmap(req: Request):
-        """
-        유저의 추천 로드맵 SVG 파일을 반환
-        """
-        try:
-            body = await req.json()
-            userId = body.get("userId")
-            if not userId:
-                return JSONResponse(
-                    status_code=400,
-                    content={
-                        "status": "400",
-                        "message": "userId가 필요합니다.",
-                        "data": None
-                    }
-                )
+# supabase에 저장되어 있는 로드맵 svg파일를 개인별로 추천해서 보여줌
+@app.post("/api/roadmap/ai-recommend")
+async def aiRecommendRoadmaps(req: Request):
+    return await aiRecommendRoadmapFromToken(req)
 
-            # 추천 API 호출
-            async with httpx.AsyncClient() as client:
-                recommendRes = await client.post(
-                    f"https://alice-cloud.com/api/roadmap/ai-recommend",
-                    json={"userId": userId}
-                )
+@app.post("/api/roadmap/ai-recommend-test")
+async def aiRecommendRoadmapsTest(req: RecommendRequest):
+    """
+    테스트용: userId를 받아서 추천 로드맵을 반환
+    """
+    try:
+        roadmapOptions = getRoadmapOptions()
+        tags = await getUserTagsTest(req.userId)
+        selectedNums = askAiForRoadmaps(tags, roadmapOptions)
 
-            if recommendRes.status_code != 200:
-                return JSONResponse(
-                    status_code=recommendRes.status_code,
-                    content={
-                        "status": str(recommendRes.status_code),
-                        "message": "추천 API 호출 실패",
-                        "data": None
-                    }
-                )
-            recommendedRoadmaps = recommendRes.json().get("recommendedRoadmaps", [])
+        recommendedRoadmaps = []
+        for num in selectedNums:
+            if num in roadmapOptions:
+                roadmapName = roadmapOptions[num]["roadmapName"]
+                svgUrl = getSvgUrlByName(roadmapName)
+                recommendedRoadmaps.append({
+                    "roadmapName": roadmapName,
+                    "svgUrl": svgUrl
+                })
+        return {
+            "userTags": tags,
+            "aiSelectedNumbers": selectedNums,
+            "recommendedRoadmaps": recommendedRoadmaps}
+    except HTTPException as e:
+        raise HTTPException(status_code=500, detail=f"추천 실패: {str(e)}")
 
-            svgResults = []
-            records = ReadRoadmapList()
-            for recommendedRoadmap in recommendedRoadmaps:
-                roadmapName = recommendedRoadmap.get("roadmapName")
-                matched = next((r for r in records if r["roadmapName"] == roadmapName), None)
-                if matched and matched.get("svgUrl"):
-                    svgResults.append({
-                        "roadmapName": roadmapName,
-                        "svgUrl": matched["svgUrl"]
-                    })
-            return {
-                "status": "200",
-                "message": "추천 로드맵 SVG 파일을 {len(svgResults)}개 불러왔습니다.",
-                "data" : svgResults
-            }
-        except Exception as e:
-            return JSONResponse(
-                status_code=500,
-                content={
-                    "status": "500",
-                    "message": f"추천 로드맵 SVG 파일 불러오기 실패: {str(e)}",
-                    "data": None
-                }
-            )
 
 # 태그 + 깃허브 요청하는코드(api top_k)
 # Alice cloude에 태그와 깃허브, 로드맵 리스트를 보내서 가장 잘 어울리는 로드맵 추천
