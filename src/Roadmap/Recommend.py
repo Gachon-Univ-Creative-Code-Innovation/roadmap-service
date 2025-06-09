@@ -63,12 +63,17 @@ def getRoadmapOptions():
     return numbered
 
 # 2. 매칭 API에서 유저 태그 받아오기 (현재 더미 태그로 대체)
-async def getUserTags(userId: int, topK: int = 5):
-    # 실제 호출 시 주석 해제
+
+async def getUserTags(token: str, userId: int, topK: int = 5):
+    headers = {
+        "Authorization": f"Bearer {token}",
+    }
+
     async with httpx.AsyncClient() as client:
         response = await client.get(
             f"{MATCHING_URL}/api/matching-service/represent-tags",
-            params={"userID": userId, "topK": topK}
+            params={"userID": userId, "topK": topK},
+            headers=headers
         )
         response.raise_for_status()
         return response.json()["data"]
@@ -77,12 +82,13 @@ async def getUserTagsTest(userId: int, topK: int = 5):
     # 실험용 더미 데이터
     return ["react", "typescript", "html"]
 
-# 3. AI에게 로드맵 번호 추천 요청
+
+# 3. AI에게 로드맵 추천 요청
 def askAiForRoadmaps(tags: list[str], roadmapOptions: dict, topN: int = 1) -> list[str]:
-    optionsText = "\n".join([f"{num}. {info['roadmapName']}" for num, info in roadmapOptions.items()])
+    optionsText = "\n".join([f"-{info['roadmapName']}" for info in roadmapOptions.values()])
     systemMsg = f"""다음은 추천할 수 있는 로드맵 목록입니다:
     {optionsText}
-    사용자의 태그를 보고 가장 적합한 번호 {topN}개를 쉼표로 나열해서 출력하세요. 예: 3"""
+    사용자의 태그를 보고 가장 적합한 로드맵 이름 {topN}개를 쉼표로 나열해서 출력하세요. 예: Frontend, Backend, DevOps"""
 
     userMsg = f"태그: {tags}"
 
@@ -94,13 +100,17 @@ def askAiForRoadmaps(tags: list[str], roadmapOptions: dict, topN: int = 1) -> li
                 {"role": "system", "content": systemMsg},
                 {"role": "user", "content": userMsg}
             ],
-            "max_tokens": 10
+
+            "max_tokens": 20
+
         }
     )
 
     content = response.json()["choices"][0]["message"]["content"]
     print("AI 응답:", content)
-    return [num.strip() for num in content.split(",") if num.strip().isdigit()]
+
+    return [name.strip() for name in content.split(",") if name.strip()]
+
 
 # 4. 로드맵 이름으로 svgUrl 조회
 def getSvgUrlByName(roadmapName: str):
@@ -109,17 +119,4 @@ def getSvgUrlByName(roadmapName: str):
     if data and data[0].get("svgUrl"):
         return data[0]["svgUrl"]
     return None
-
-# 실행 방법 (CMD)
-# uvicorn test5:app --reload
-
-# 테스트 예시 (CMD)
-# curl -X POST http://localhost:8000/api/roadmap/ai-recommend ^
-#  -H "Content-Type: application/json" ^
-#  -d "{\"userId\": 5}"
-
-#수정할 내용, JWT 토큰에서 userID 가져오게 코드 수정하면 아래 코드 수정하면 됨.
-# 요청 모델
-#class RecommendRequest(BaseModel):
-#    userId: int
 
