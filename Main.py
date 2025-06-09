@@ -1,12 +1,16 @@
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
+from fastapi import Request
 from fastapi.responses import JSONResponse, Response
 from fastapi.middleware.cors import CORSMiddleware
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
+from starlette import status
+
 from src.Roadmap.CrawlingToText import GetRoadmapDf
 from src.Utils.RepoToDB import UploadRoadmap,ReadRoadmapList,UpdateRoadmap,ClearRoadmap
 from src.Utils.RepoToStorage import UploadStorage,ClearStorage
+from src.Roadmap.Recommend import aiRecommendRoadmaps
 from pyppeteer import launch
 import traceback
 import datetime
@@ -257,8 +261,8 @@ async def SaveRoadmapSvg():
 
     }
 
-# supabase에 저장되어 있는 로드맵 svg파일을 보여줌
-@app.get("/api/roadmap/svgView")
+# supabase에 저장되어 있는 로드맵 svg파일의 url을 보여주기 위해
+@app.get("/api/roadmap/view")
 async def GetRoadmapSvg(roadmapName: str):
         """로드맵 이름 기준으로 SVG URL을 반환"""
         records = ReadRoadmapList()
@@ -279,20 +283,12 @@ async def GetRoadmapSvg(roadmapName: str):
                     "data": None
                 }
 
-            async with httpx.AsyncClient() as client:
-                response = await client.get(svgUrl)
+            return {
+                "status": "200",
+                "message": "SVG URL 조회 성공",
+                "data": svgUrl
+            }
 
-            if response.status_code != 200:
-                return {
-                    "status": "500",
-                    "message": f"SVG 파일을 가져오는 데 실패했습니다. 상태코드: {response.status_code}",
-                    "data": None
-                }
-
-            return Response(
-                content=response.content,
-                media_type="image/svg+xml"
-            )
 
         except Exception as e:
             return JSONResponse(
@@ -300,6 +296,68 @@ async def GetRoadmapSvg(roadmapName: str):
                 content={
                     "status": "500",
                     "message": f"로드맵 SVG URL 조회 실패: {e}",
+                    "data": None
+                }
+            )
+
+# supabase에 저장되어 있는 로드맵 svg파일을 보여줌
+@app.get("/api/roadmap/recommended-roadmap")
+async def GetRecommendedRoadmap(req: Request):
+        """
+        유저의 추천 로드맵 SVG 파일을 반환
+        """
+        try:
+            body = await req.json()
+            userId = body.get("userId")
+            if not userId:
+                return JSONResponse(
+                    status_code=400,
+                    content={
+                        "status": "400",
+                        "message": "userId가 필요합니다.",
+                        "data": None
+                    }
+                )
+
+            # 추천 API 호출
+            async with httpx.AsyncClient() as client:
+                recommendRes = await client.post(
+                    f"https://alice-cloud.com/api/roadmap/ai-recommend",
+                    json={"userId": userId}
+                )
+
+            if recommendRes.status_code != 200:
+                return JSONResponse(
+                    status_code=recommendRes.status_code,
+                    content={
+                        "status": str(recommendRes.status_code),
+                        "message": "추천 API 호출 실패",
+                        "data": None
+                    }
+                )
+            recommendedRoadmaps = recommendRes.json().get("recommendedRoadmaps", [])
+
+            svgResults = []
+            records = ReadRoadmapList()
+            for recommendedRoadmap in recommendedRoadmaps:
+                roadmapName = recommendedRoadmap.get("roadmapName")
+                matched = next((r for r in records if r["roadmapName"] == roadmapName), None)
+                if matched and matched.get("svgUrl"):
+                    svgResults.append({
+                        "roadmapName": roadmapName,
+                        "svgUrl": matched["svgUrl"]
+                    })
+            return {
+                "status": "200",
+                "message": "추천 로드맵 SVG 파일을 {len(svgResults)}개 불러왔습니다.",
+                "data" : svgResults
+            }
+        except Exception as e:
+            return JSONResponse(
+                status_code=500,
+                content={
+                    "status": "500",
+                    "message": f"추천 로드맵 SVG 파일 불러오기 실패: {str(e)}",
                     "data": None
                 }
             )
